@@ -154,4 +154,13 @@ You must understand every line you submit. We check this with your video and in 
 4. Record a video of **3 minutes or less** (Loom or unlisted YouTube). Show the architecture, the data flow, and one trade-off you made. Make sure anyone with the link can view it.
 5. Paste the repository link and the video link in the application form.
 
-We will run `pnpm install && pnpm check && pnpm typecheck && pnpm test` on your repository.
+## Decisions
+
+1. **Integer Cents & Deterministic Remainder Splitting with Atomic Batching**:
+   All monetary amounts are strictly managed as integers (cents) to eliminate floating point rounding errors. When splitting uneven totals (e.g., 1000 cents among 3 members: 334, 333, 333), remainder cents are allocated deterministically to members based on insertion order (`ORDER BY created_at ASC`). The bill and all individual member shares are written atomically using Cloudflare D1's `c.env.DB.batch(...)`, ensuring complete consistency even during unexpected operational failures.
+
+2. **Concurrency-Safe Idempotent Share Payments**:
+   Payment processing on `POST /api/bills/:billId/shares/:shareId/pay` uses conditional atomic SQL execution (`UPDATE shares SET paid_at = ?, idempotency_key = ? WHERE id = ? AND bill_id = ? AND paid_at IS NULL`) combined with a unique constraint `uq_share_idempotency(idempotency_key)`. This guarantees safety against race conditions when two concurrent requests try to pay the same share. Repeated requests with the identical `Idempotency-Key` safely replay `200 OK` with the saved payload, while mismatched keys return `409 Conflict`.
+
+3. **Defensive Non-Crashing Frontend with Explicit State Boundaries**:
+   The web application isolates loading, empty, and failure states for every interaction. When API calls return 4xx/5xx errors or experience network timeouts, errors are caught gracefully and surfaced via alerts with retry options without crashing the UI. Share payments only transition state upon confirmed 200 responses, keeping shares visibly unpaid with clear error feedback if a payment fails.
